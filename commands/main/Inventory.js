@@ -1,10 +1,6 @@
-import Canvas from 'skia-canvas';
-import Discord from 'discord.js';
 import minecraft_data from 'minecraft-data';
 import { addPh, getComponent, getEmbed, ph } from '../../utilities/messages.js';
 import keys from '../../utilities/keys.js';
-import Command from '../../structures/Command.js';
-import Pagination from '../../structures/helpers/Pagination.js';
 import * as utils from '../../utilities/utils.js';
 
 const mcData = minecraft_data('1.20.1');
@@ -75,44 +71,35 @@ const armorSlotNames = {
     45: keys.commands.inventory.slots.offhand,
 };
 
-export default class Inventory extends Command {
+export default class Inventory {
 
     constructor() {
-        super({
-            name: 'inventory',
-            requiresUserIndex: 0,
-            category: 'main',
-        });
+        this.name = 'inventory';
+        this.requiresUserIndex = 0;
+        this.category = 'main';
     }
 
-    async execute(interaction, client, args, server) {
-        if(!await super.execute(interaction, client, args, server)) return;
-
-        /** @type {UserResponse} */
+    async execute(args, server) {
         const user = args[0];
         const showDetails = args[1];
 
-        const playerData = await utils.getLivePlayerNbt(server, user, interaction);
-        if(!playerData) return;
+        // Obtener el archivo NBT desde la nueva ruta
+        const playerDataPath = `/usr/src/app/uploads/playerdata/${user.uuid}.nbt`;
+        const playerData = await utils.readNbtFromFile(playerDataPath);
+        if (!playerData) return;
 
-        //Convert slots to network slots
-        playerData.Inventory = playerData.Inventory.map(item => {
-            return {
-                ...item,
-                Slot: this.dataSlotToNetworkSlot(item.Slot),
-            };
-        });
+        // Convertir slots a network slots
+        playerData.Inventory = playerData.Inventory.map(item => ({
+            ...item,
+            Slot: this.dataSlotToNetworkSlot(item.Slot),
+        }));
 
-        const itemButtons = [];
-        const {
-            canvas: invCanvas,
-            ctx,
-        } = await renderContainer(
+        // Renderizar el contenedor del inventario
+        const { canvas: invCanvas, ctx } = await renderContainer(
             './resources/images/containers/inventory_blank.png',
             playerData.Inventory,
             Object.assign({}, mainInvSlotCoords, armorSlotCoords, hotbarSlotCoords),
-            showDetails ? this.pushInvButton.bind(null, itemButtons, Infinity) : () => {
-            }, //Push itemButtons if showDetails is set to true
+            showDetails ? this.pushInvButton.bind(null, itemButtons, Infinity) : () => {},
         );
 
         async function getSkin(uuidOrUsername) {
@@ -126,21 +113,6 @@ export default class Inventory extends Command {
 
         const skinImg = await getSkin(server.online ? user.uuid : user.username);
         ctx.drawImage(skinImg, 70, 20, 65, 131);
-
-        const invAttach = new Discord.AttachmentBuilder(
-            await invCanvas.toBuffer('png'),
-            { name: `Inventory_Player.png`, description: keys.commands.inventory.inventory_description },
-        );
-        const invEmbed = getEmbed(keys.commands.inventory.success.final, ph.emojisAndColors(), { username: user.username });
-        // Send without buttons if showDetails is false
-        if(!showDetails) return await interaction.replyOptions({ files: [invAttach], embeds: [invEmbed] });
-
-        const paginationPages = await this.getInventoryPages(itemButtons, playerData.Inventory, user.username, invEmbed, invAttach);
-        const pagination = new Pagination(client, interaction, paginationPages, {
-            showSelectedButton: true,
-            showStartPageOnce: true,
-        });
-        await pagination.start();
     }
 
 
@@ -274,126 +246,6 @@ export default class Inventory extends Command {
         ));
     }
 
-    /**
-     * Constructs pagination pages for the specified inventory and buttons
-     * @param {Discord.ButtonBuilder[]} inventoryButtons - The buttons to use for each item in the inventory
-     * @param {Object} inventory - The inventory nbt data to use
-     * @param {string} username - The username of the player
-     * @param {Discord.EmbedBuilder} embed - The embed to use for each of the pages
-     * @param {Discord.AttachmentBuilder} attach - The attachment to use for each of the pages
-     * @returns {Promise<PaginationPages>}
-     */
-    async getInventoryPages(inventoryButtons, inventory, username, embed, attach) {
-        /** @type {PaginationPages} */
-        const paginationPages = {};
-
-        for(const button of inventoryButtons) {
-            const buttonId = button.data.custom_id;
-
-            const index = parseInt(buttonId.match(/\d+/g)[0]); //Match first number in button id
-
-            /** @type {object} */
-            let item = inventory[index];
-            let indexOfIndex = 0; //Index of the item index in the buttonId
-
-            //If parent item is a shulker, get item from shulker inventory
-            const indexes = buttonId.split('_').slice(2);
-            for(const i of indexes) {
-                item = item.tag.BlockEntityTag.Items[i];
-                indexOfIndex++;
-            }
-
-            const formattedId = item.id.split(':').pop();
-            const slot = item.Slot;
-            const itemStats = mcData.itemsByName[formattedId];
-
-            const itemEmbed = getEmbed(
-                keys.commands.inventory.success.item,
-                {
-                    slot_name: armorSlotNames[slot] ?? addPh(keys.commands.inventory.slots.default, { slot }),
-                    name: itemStats?.displayName ?? formattedId,
-                    id: item.id,
-                    count: item.Count,
-                    max_count: itemStats?.stackSize ?? 64,
-                    username: username,
-                    avatar: `https://minotar.net/helm/${username}/64.png`,
-                },
-                ph.emojisAndColors(),
-            );
-            const isSpecialItem = this.addInfo(itemEmbed, item.tag, itemStats);
-
-            //If item is a shulker, render shulker inventory
-            if(item.tag?.BlockEntityTag?.Items && formattedId.endsWith('shulker_box')) {
-                //Increase slot numbers by 18 in inventory
-                const mappedInvItems = inventory.map(item => {
-                    if(armorSlotCoords[item.Slot]) return; //Exclude armor slots
-                    return {
-                        ...item,
-                        Slot: item.Slot + 18,
-                    };
-                }).filter(i => i); //Remove undefined items
-
-                //Add parentIndex to shulker items to add in customId on buttons
-                const mappedShulkerItems = item.tag.BlockEntityTag.Items.map(childItem => {
-                    return {
-                        ...childItem,
-                        parentIndex: buttonId.split(/slot_?/).pop(),
-                    };
-                });
-
-                //Shulker Items + Inventory
-                const allItems = mappedShulkerItems.concat(mappedInvItems);
-
-                const shulkerButtons = []; //Clear previous buttons
-                const { canvas: shulkerImage } = await renderContainer(
-                    './resources/images/containers/shulker_blank.png',
-                    allItems,
-                    shulkerSlotCoords,
-                    this.pushInvButton.bind(null, shulkerButtons, 26),
-                );
-
-                const shulkerAttach = new Discord.AttachmentBuilder(
-                    await shulkerImage.toBuffer('png'),
-                    { name: `Shulker_Contents.png`, description: keys.commands.inventory.shulker_description },
-                );
-                const shulkerEmbed = getEmbed(keys.commands.inventory.success.final_shulker, ph.emojisAndColors(), { username });
-
-                paginationPages[buttonId] = {
-                    button,
-                    pages: {
-                        ...await this.getInventoryPages(
-                            shulkerButtons,
-                            inventory,
-                            username,
-                            shulkerEmbed,
-                            shulkerAttach,
-                        ),
-                    },
-                };
-
-                //Push shulkerItemEmbed to first page
-                if(isSpecialItem) paginationPages[buttonId].pages['slot_start'].page.embeds.push(itemEmbed);
-            }
-            //Only add page for items that have special info
-            else if(isSpecialItem) {
-                paginationPages[buttonId] = {
-                    button,
-                    page: {
-                        embeds: [embed, itemEmbed],
-                    },
-                };
-            }
-        }
-        paginationPages['slot_start'] = {
-            startPage: true,
-            page: {
-                embeds: [embed],
-                files: [attach],
-            },
-        };
-
-        return paginationPages;
-    }
 
     romanNumber(number) {
         //Enchantments don't show level 1
@@ -426,8 +278,12 @@ export default class Inventory extends Command {
 
 
 // noinspection JSUnusedLocalSymbols
-async function renderContainer(backgroundPath, items, slotCoords, loopCode = (item, index) => {}) {
-    const canvas = new Canvas.Canvas(352, 332);
+const fs = require('fs');
+const path = require('path');
+const Canvas = require('skia-canvas');
+
+async function renderContainer(backgroundPath, items, slotCoords, player, loopCode = (item, index) => {}) {
+    const canvas = new Canvas(352, 332);
     const ctx = canvas.getContext('2d');
     const background = await Canvas.loadImage(backgroundPath);
     ctx.drawImage(background, 0, 0, canvas.width, canvas.height);
@@ -490,6 +346,17 @@ async function renderContainer(backgroundPath, items, slotCoords, loopCode = (it
 
         loopCode(items[i], i);
     }
+
+    const outputPath = '/usr/src/app/uploads/inventory';
+    const fileName = `Inventory_Player_${player}.png`;
+    const filePath = path.join(outputPath, fileName);
+
+    // Asegúrate de que el directorio existe
+    fs.mkdirSync(outputPath, { recursive: true });
+
+    // Guarda la imagen en el sistema de archivos
+    const buffer = await canvas.toBuffer('png');
+    fs.writeFileSync(filePath, buffer);
 
     return { canvas, ctx };
 }
