@@ -79,7 +79,7 @@ export default class Inventory {
         this.category = 'main';
     }
 
-    async execute(args, server) {
+    async execute(args, file) {
         const user = args[0];
         const showDetails = args[1];
 
@@ -192,7 +192,8 @@ export default class Inventory {
                 'leaping': `- ${mcData.effectsByName['JumpBoost'].displayName} (3:00)`,
                 'long_leaping': `- ${mcData.effectsByName['JumpBoost'].displayName} (8:00)`,
                 'strong_leaping': `- ${mcData.effectsByName['JumpBoost'].displayName} II (1:30)`,
-                'strength': `- ${mcData.effectsByName['Strength'].displayName} (3:00)`,
+                'strength': `- ${mcData.effectsByName['Strength'].displayName
+} (3:00)`,
                 'long_strength': `- ${mcData.effectsByName['Strength'].displayName} (8:00)`,
                 'strong_strength': `- ${mcData.effectsByName['Strength'].displayName} II (1:30)`,
                 'invisibility': `- ${mcData.effectsByName['Invisibility'].displayName} (3:00)`,
