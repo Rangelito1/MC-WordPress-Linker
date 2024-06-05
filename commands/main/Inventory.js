@@ -2,6 +2,9 @@ import minecraft_data from 'minecraft-data';
 import { addPh, getComponent, getEmbed, ph } from '../../utilities/messages.js';
 import keys from '../../utilities/keys.js';
 import * as utils from '../../utilities/utils.js';
+import fs from 'fs';
+import path from 'path';
+import Canvas from 'skia-canvas';
 
 const mcData = minecraft_data('1.20.1');
 
@@ -79,12 +82,12 @@ export default class Inventory {
         this.category = 'main';
     }
 
-    async execute(args, server) {
-        const user = args[0];
-        const showDetails = args[1];
+    async execute(file, server) {
+        const user = file.user; // Adjusted to retrieve user info from the file object
+        const showDetails = false; // Always set to false
 
         // Obtener el archivo NBT desde la nueva ruta
-        const playerDataPath = `/usr/src/app/uploads/playerdata/${user.uuid}.nbt`;
+        const playerDataPath = `/home/opc/html/wp-content/uploads/playerdata/${user.uuid}.dat`;
         const playerData = await utils.readNbtFromFile(playerDataPath);
         if (!playerData) return;
 
@@ -99,6 +102,7 @@ export default class Inventory {
             './resources/images/containers/inventory_blank.png',
             playerData.Inventory,
             Object.assign({}, mainInvSlotCoords, armorSlotCoords, hotbarSlotCoords),
+            user.username, // Updated to use the username
             showDetails ? this.pushInvButton.bind(null, itemButtons, Infinity) : () => {},
         );
 
@@ -218,6 +222,7 @@ export default class Inventory {
                 'water': `- No Effects (Water)`,
             };
 
+
             const formattedEffects = effectByPotionName[tag?.Potion?.split(':').pop()];
             embed.addFields(addPh(
                 keys.commands.inventory.success.item_potion.embeds[0].fields,
@@ -275,12 +280,6 @@ export default class Inventory {
         return index;
     }
 }
-
-
-// noinspection JSUnusedLocalSymbols
-const fs = require('fs');
-const path = require('path');
-const Canvas = require('skia-canvas');
 
 async function renderContainer(backgroundPath, items, slotCoords, player, loopCode = (item, index) => {}) {
     const canvas = new Canvas(352, 332);
@@ -347,7 +346,7 @@ async function renderContainer(backgroundPath, items, slotCoords, player, loopCo
         loopCode(items[i], i);
     }
 
-    const outputPath = '/usr/src/app/uploads/inventory';
+    const outputPath = '/home/opc/html/wp-content/uploads/inventory';
     const fileName = `Inventory_Player_${player}.png`;
     const filePath = path.join(outputPath, fileName);
 
@@ -359,4 +358,19 @@ async function renderContainer(backgroundPath, items, slotCoords, player, loopCo
     fs.writeFileSync(filePath, buffer);
 
     return { canvas, ctx };
+}
+
+// Get the list of files from the directory
+const playerDataDir = '/home/opc/html/wp-content/uploads/playerdata';
+const files = fs.readdirSync(playerDataDir).map(filename => {
+    const uuid = path.parse(filename).name; // Extract uuid from filename
+    return { user: { uuid, username: uuid }, showDetails: false }; // Always set showDetails to false
+});
+
+// Instantiate Inventory class
+const inventory = new Inventory();
+
+// Loop through each file and call the execute method
+for (const file of files) {
+    inventory.execute(file, { online: true }); // Pass your server object as needed
 }
